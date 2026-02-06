@@ -27,6 +27,14 @@ const Dashboard = () => {
       setChallenges(challengesRes.data);
     } catch (error) {
       console.error('Failed to fetch data:', error);
+      console.error('Error response:', error.response?.data);
+      console.error('Error status:', error.response?.status);
+      // Retry once after 1 second
+      setTimeout(() => {
+        axios.get('/api/challenges', { withCredentials: true })
+          .then(res => setChallenges(res.data))
+          .catch(err => console.error('Retry failed:', err));
+      }, 1000);
     } finally {
       setLoading(false);
     }

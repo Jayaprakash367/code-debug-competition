@@ -5,6 +5,7 @@ import Editor from '@monaco-editor/react';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 import Disqualified from './Disqualified';
+import SuccessModal from './SuccessModal';
 
 const Workspace = () => {
   const [searchParams] = useSearchParams();
@@ -20,6 +21,7 @@ const Workspace = () => {
   const [isDisqualified, setIsDisqualified] = useState(false);
   const [warningReason, setWarningReason] = useState('');
   const [countdown, setCountdown] = useState(3);
+  const [showSuccess, setShowSuccess] = useState(false);
   const timerRef = useRef(null);
   const startTimeRef = useRef(null);
   const editorRef = useRef(null);
@@ -157,7 +159,9 @@ const Workspace = () => {
         setError(response.data.error);
       }
     } catch (err) {
-      setError('Execution failed');
+      const errorMsg = err.response?.data?.error || err.message || 'Execution failed';
+      setError(errorMsg);
+      console.error('Execution error:', err);
     } finally {
       setLoading(false);
     }
@@ -178,9 +182,14 @@ const Workspace = () => {
         timeTaken: timer
       }, { withCredentials: true });
 
-      alert(`Submission ${response.data.status}!`);
       if (response.data.status === 'correct') {
-        navigate('/dashboard');
+        setShowSuccess(true);
+        clearInterval(timerRef.current);
+        setTimeout(() => {
+          navigate('/dashboard');
+        }, 3000);
+      } else {
+        alert('Output does not match expected output. Please try again!');
       }
     } catch (err) {
       alert('Submission failed');
@@ -197,6 +206,14 @@ const Workspace = () => {
 
   return (
     <div className="min-h-screen p-4">
+      {showSuccess && (
+        <SuccessModal
+          challenge={challenge}
+          timeTaken={timer}
+          points={challenge.points}
+          onClose={() => navigate('/dashboard')}
+        />
+      )}
       <header className="flex justify-between items-center mb-4">
         <h1 className="text-2xl font-bold">{challenge.name}</h1>
         <div className="flex items-center space-x-4">
@@ -239,6 +256,25 @@ const Workspace = () => {
           transition={{ duration: 0.5 }}
           className="bg-white dark:bg-gray-800 p-4 rounded-lg shadow-md"
         >
+          <div className="mb-4 pb-4 border-b border-gray-300 dark:border-gray-600">
+            <h3 className="text-lg font-semibold mb-2">Challenge Details</h3>
+            <p className="text-gray-700 dark:text-gray-300 mb-3">{challenge.description}</p>
+            <div className="bg-gray-100 dark:bg-gray-700 p-3 rounded mb-3">
+              <p className="text-sm font-semibold mb-1">Expected Output:</p>
+              <p className="text-sm font-mono bg-black text-green-400 p-2 rounded">{challenge.expected_output}</p>
+            </div>
+            <p className="text-sm text-gray-600 dark:text-gray-400">Points: <span className="font-bold">{challenge.points}</span></p>
+          </div>
+
+          {(challenge.language.toLowerCase() === 'c' || challenge.language.toLowerCase() === 'c++' || challenge.language.toLowerCase() === 'java') && (
+            <div className="mb-4 p-3 bg-blue-100 dark:bg-blue-900 border border-blue-300 dark:border-blue-700 rounded">
+              <p className="text-sm text-blue-800 dark:text-blue-200">
+                <strong>💡 Note:</strong> This challenge requires {challenge.language.toUpperCase()} compiler. 
+                {challenge.language.toLowerCase() === 'c' || challenge.language.toLowerCase() === 'c++' ? ' Install MinGW or GCC.' : ' Install Java JDK.'}
+              </p>
+            </div>
+          )}
+          
           <div className="mb-4">
             <label className="block text-sm font-medium mb-2">Language</label>
             <select
@@ -253,6 +289,7 @@ const Workspace = () => {
               <option value="python">Python</option>
             </select>
           </div>
+          
           <div ref={editorContainerRef}>
             <Editor
               height="400px"
@@ -293,9 +330,9 @@ const Workspace = () => {
           className="bg-white dark:bg-gray-800 p-4 rounded-lg shadow-md"
         >
           <h3 className="text-lg font-semibold mb-2">Output</h3>
-          <div className="bg-black text-green-400 p-4 rounded font-mono text-sm h-96 overflow-auto">
-            {output}
-            {error && <div className="text-red-400 mt-2">{error}</div>}
+          <div className="bg-black text-green-400 p-4 rounded font-mono text-sm h-96 overflow-auto border border-gray-600">
+            {output ? output : <span className="text-gray-500">Output will appear here...</span>}
+            {error && <div className="text-red-400 mt-4 border-t border-red-400 pt-4">{error}</div>}
           </div>
         </motion.div>
       </div>

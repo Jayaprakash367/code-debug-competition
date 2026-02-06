@@ -91,9 +91,22 @@ app.get('/check-auth', (req, res) => {
 });
 
 // Get challenges
-app.get('/challenges', requireAuth, (req, res) => {
+app.get('/challenges', (req, res) => {
+  console.log('GET /challenges called');
+  console.log('Session:', req.session);
+  console.log('Team ID:', req.session.teamId);
+  
+  if (!req.session.teamId) {
+    console.log('No team ID in session, returning unauthorized');
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  
   db.all('SELECT id, name, description, language, points FROM challenges', [], (err, rows) => {
-    if (err) return res.status(500).json({ error: 'Database error' });
+    if (err) {
+      console.error('Database error:', err);
+      return res.status(500).json({ error: 'Database error' });
+    }
+    console.log(`Returning ${rows.length} challenges`);
     res.json(rows);
   });
 });
@@ -146,12 +159,34 @@ app.post('/execute', (req, res) => {
 
   let output = '';
   let error = '';
+  let responseSent = false;
+
+  const sendResponse = () => {
+    if (!responseSent) {
+      responseSent = true;
+      res.json({ output: output.trim(), error: error.trim() });
+    }
+  };
+
+  const cleanup = () => {
+    try {
+      fs.unlinkSync(filePath);
+      if (language !== 'python') {
+        const exePath = path.join(tempDir, fileName + (language === 'java' ? '.class' : ''));
+        if (fs.existsSync(exePath)) fs.unlinkSync(exePath);
+      }
+    } catch (e) {
+      console.error('Cleanup error:', e.message);
+    }
+    sendResponse();
+  };
 
   const runExecution = () => {
-    const child = spawn(runCmd[0], runCmd.slice(1), { cwd: tempDir });
+    console.log(`Executing: ${runCmd[0]} ${runCmd.slice(1).join(' ')}`);
+    const child = spawn(runCmd[0], runCmd.slice(1), { cwd: tempDir, shell: true });
     let timeout = setTimeout(() => {
       child.kill();
-      error = 'Execution timeout';
+      error = 'Execution timeout (5 seconds exceeded)';
       cleanup();
     }, 5000);
 
@@ -163,31 +198,49 @@ app.post('/execute', (req, res) => {
       error += data.toString();
     });
 
+    child.on('error', (err) => {
+      clearTimeout(timeout);
+      console.error('Execution error:', err);
+      error = `Runtime error: ${err.message}`;
+      cleanup();
+    });
+
     child.on('close', (code) => {
       clearTimeout(timeout);
+      if (code !== 0 && !error) {
+        error = `Process exited with code ${code}`;
+      }
       cleanup();
     });
   };
 
-  const cleanup = () => {
-    try {
-      fs.unlinkSync(filePath);
-      if (language !== 'python') {
-        fs.unlinkSync(path.join(tempDir, fileName + (language === 'java' ? '.class' : '')));
-      }
-    } catch (e) {}
-    if (!res.headersSent) {
-      res.json({ output: output.trim(), error: error.trim() });
-    }
-  };
-
   if (compileCmd) {
-    const compile = spawn(compileCmd[0], compileCmd.slice(1));
+    console.log(`Compiling: ${compileCmd[0]} ${compileCmd.slice(1).join(' ')}`);
+    const compile = spawn(compileCmd[0], compileCmd.slice(1), { cwd: tempDir, shell: true });
+    let compileOutput = '';
+    let compileError = '';
+
+    compile.stdout.on('data', (data) => {
+      compileOutput += data.toString();
+    });
+
+    compile.stderr.on('data', (data) => {
+      compileError += data.toString();
+    });
+
+    compile.on('error', (err) => {
+      console.error('Compiler error:', err);
+      error = `Compiler not found: ${compileCmd[0]}. Make sure ${compileCmd[0]} is installed and in PATH.`;
+      cleanup();
+    });
+
     compile.on('close', (code) => {
       if (code !== 0) {
-        error = 'Compilation failed';
+        error = compileError || compileOutput || `Compilation failed (exit code ${code})`;
+        console.error('Compilation failed:', error);
         cleanup();
       } else {
+        console.log('Compilation successful, running code...');
         runExecution();
       }
     });
